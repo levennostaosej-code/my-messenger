@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мессенджер</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial; padding: 15px; background: #121212; color: #fff; margin: 0; }
+        #chat { height: 400px; overflow-y: auto; border: 1px solid #333; padding: 10px; border-radius: 10px; background: #1e1e1e; display: flex; flex-direction: column; margin-bottom: 10px; }
+        .msg { margin: 5px 0; padding: 8px 12px; border-radius: 15px; max-width: 80%; word-wrap: break-word; }
+        .my { background: #007bff; align-self: flex-end; }
+        .other { background: #3a3a3a; align-self: flex-start; }
+        .system { background: #333; align-self: center; font-size: 12px; color: #aaa; padding: 5px 15px; border-radius: 20px; }
+        #inputDiv { display: flex; gap: 8px; }
+        #msgInput { flex: 1; padding: 10px; border-radius: 20px; border: none; background: #2a2a2a; color: #fff; }
+        #sendBtn { padding: 10px 20px; border-radius: 20px; border: none; background: #007bff; color: #fff; font-weight: bold; }
+        #nameInput { display: flex; gap: 10px; margin-bottom: 10px; }
+        #nameInput input { flex: 1; padding: 10px; border-radius: 20px; border: none; background: #2a2a2a; color: #fff; }
+        #nameInput button { padding: 10px 20px; border-radius: 20px; border: none; background: #28a745; color: #fff; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>💬 Мессенджер</h2>
+
+    <div id="nameInput">
+        <input id="userName" placeholder="Введите ваше имя..." value="Вася">
+        <button id="setNameBtn">Установить</button>
+    </div>
+
+    <div id="chat"></div>
+
+    <div id="inputDiv">
+        <input id="msgInput" placeholder="Сообщение..." disabled>
+        <button id="sendBtn" disabled>➤</button>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        // ---- ВСЯ ЛОГИКА ЧАТА ----
+        const chat = document.getElementById('chat');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const userNameInput = document.getElementById('userName');
+        const setNameBtn = document.getElementById('setNameBtn');
+
+        let socket = null;
+        let currentUser = localStorage.getItem('chatUserName') || 'Вася';
+        userNameInput.value = currentUser;
+
+        function connectSocket() {
+            if (socket) socket.disconnect();
+            socket = io();
+
+            socket.on('connect', () => {
+                addMessage('system', '✅ Подключено к серверу!');
+                msgInput.disabled = false;
+                sendBtn.disabled = false;
+            });
+
+            socket.on('history', (history) => {
+                chat.innerHTML = '';
+                history.forEach(msg => {
+                    addMessage(msg.user === currentUser ? 'my' : 'other', msg.text, msg.user);
+                });
+            });
+
+            socket.on('message', (msg) => {
+                if (msg.user === currentUser) {
+                    addMessage('my', msg.text, msg.user);
+                } else {
+                    addMessage('other', msg.text, msg.user);
+                }
+            });
+
+            socket.on('disconnect', () => {
+                addMessage('system', '❌ Отключено от сервера');
+                msgInput.disabled = true;
+                sendBtn.disabled = true;
+            });
+        }
+
+        function addMessage(type, text, user = '') {
+            const div = document.createElement('div');
+            div.className = `msg ${type}`;
+            if (type === 'system') {
+                div.textContent = text;
+            } else if (type === 'my' || type === 'other') {
+                div.innerHTML = `<b>${user}:</b> ${text}`;
+            }
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        // Отправка сообщения
+        sendBtn.onclick = () => {
+            const text = msgInput.value.trim();
+            if (!text || !socket) return;
+            socket.emit('message', { user: currentUser, text: text });
+            msgInput.value = '';
+        };
+
+        msgInput.onkeydown = (e) => {
+            if (e.key === 'Enter') sendBtn.click();
+        };
+
+        // Смена имени
+        setNameBtn.onclick = () => {
+            const newName = userNameInput.value.trim() || 'Вася';
+            currentUser = newName;
+            localStorage.setItem('chatUserName', currentUser);
+            if (socket) {
+                socket.disconnect();
+                setTimeout(connectSocket, 500);
+            }
+        };
+
+        // Запуск
+        connectSocket();
+    </script>
+</body>
+</html>
