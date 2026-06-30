@@ -1,0 +1,123 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const fs = require('fs');
+
+const app = express();
+app.use(cors());
+app.use(express.static('public'));
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Хранилище данных
+let messages = []; // {id, from, to, text, time, chatId}
+let users = {}; // socketId: name
+let groups = {}; // groupId: {name, creator, members: [names], chatId: groupId}
+let groupCounter = 0;
+
+// Загружаем историю из файла
+if (fs.existsSync('messages.json')) {
+  try {
+    messages = JSON.parse(fs.readFileSync('messages.json'));
+  } catch(e) {}
+}
+if (fs.existsSync('groups.json')) {
+  try {
+    groups = JSON.parse(fs.readFileSync('groups.json'));
+    groupCounter = Object.keys(groups).length;
+  } catch(e) {}
+}
+
+io.on('connection', (socket) => {
+  console.log('✅ Пользователь подключился:', socket.id);
+
+  // Регистрация
+  socket.on('register', (name) => {
+    users[socket.id] = name;
+    // Отправляем историю
+    socket.emit('history', messages);
+    // Отправляем список групп
+    socket.emit('groups_list', groups);
+    // Обновляем список пользователей
+    io.emit('users', Object.values(users));
+  });
+
+  // Создание группы
+  socket.on('create_group', (data) => {
+    const creator = users[socket.id];
+    if (!creator) return;
+    const groupId = 'group_' + (++groupCounter);
+    const group = {
+      id: groupId,
+      name: data.name || 'Новая группа',
+      creator: creator,
+      members: [creator, ...data.members],
+      chatId: groupId
+    };
+    groups[groupId] = group;
+    fs.writeFileSync('groups.json', JSON.stringify(groups, null, 2));
+    io.emit('groups_list', groups);
+    // Отправляем сообщение о создании
+    const msg = {
+      id: Date.now(),
+      from: 'system',
+      to: groupId,
+      text: `Группа "${group.name}" создана!`,
+      time: new Date().toLocaleTimeString(),
+      chatId: groupId
+    };
+    messages.push(msg);
+    fs.writeFileSync('messages.json', JSON.stringify(messages, null, 2));
+    io.emit('message', msg);
+  });
+
+  // Отправка сообщения
+  socket.on('message', (data) => {
+    const from = users[socket.id];
+    if (!from) return;
+    // Проверяем, есть ли доступ к чату
+    let isMember = true;
+    if (data.to && data.to.startsWith('group_')) {
+      const group = groups[data.to];
+      if (group && !group.members.includes(from)) {
+        isMember = false;
+      }
+    }
+    if (!isMember) return;
+    const msg = {
+      id: Date.now(),
+      from: from,
+      to: data.to || 'all',
+      text: data.text,
+      time: new Date().toLocaleTimeString(),
+      chatId: data.to || 'all'
+    };
+    messages.push(msg);
+    fs.writeFileSync('messages.json', JSON.stringify(messages, null, 2));
+    io.emit('message', msg);
+  });
+
+  // Обработка звонков (упрощённо, для групп — всем)
+  socket.on('call', (data) => {
+    const from = users[socket.id];
+    if (!from) return;
+    io.emit('call', { from, ...data });
+  });
+
+  socket.on('disconnect', () => {
+    const name = users[socket.id];
+    delete users[socket.id];
+    io.emit('users', Object.values(users));
+    console.log('❌ Пользователь отключился:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
